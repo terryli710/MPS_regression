@@ -25,6 +25,8 @@ def main():
     print("mean is {}, var is {}".format(ss.mean_, ss.var_))
     # possible hyper-parameter tuning using cross-validation
 
+
+
     # tuned model trained on training set.
     lr = LinearRegression()
     lr.fit(x_train_s, y_train)
