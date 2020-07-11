@@ -2,8 +2,7 @@
 
 '''
 ToDo:
-1. fpr/gus selection will select 0 features
-2. spearmanr function sometimes cannot calculate results
+1. fpr/gus selection will select 0 feature
 '''
 
 import json
@@ -17,6 +16,10 @@ from sklearn.feature_selection import GenericUnivariateSelect, SelectFpr, chi2, 
 from sklearn.model_selection import KFold
 from scipy.stats import spearmanr
 from sklearn.utils import resample
+import seaborn
+import matplotlib.pyplot as plt
+from sklearn.utils.testing import ignore_warnings
+from sklearn.exceptions import ConvergenceWarning
 
 # Data related
 
@@ -78,16 +81,40 @@ def writeLog(x_name, y_name, mean, std, feature_eng, penalty, cv_results, preds,
     }
     return log
 
+# helper functions for writing log
+def _extractName(file_name):
+    return '.'.join(file_name.split('.')[0:-1])
+
+def _extractIndex(file_name):
+    index = file_name.split('.')[0]
+    try:
+        int(index)
+        return int(index)
+    except ValueError:
+        return 0
+
+def _getMaxIndex():
+    file_names = os.listdir('log')
+    index = [_extractIndex(name) for name in file_names]
+    return max(index)
+
+def _getRegressionType(penalty):
+    if penalty['l1_ratio'] > 0.5: return 'lasso'
+    else: return 'ridge'
+
 def saveLog(x_name, y_name, mean, std, feature_eng, penalty, cv_results, preds, test_results, boot_results, verbose = False):
     log = writeLog(x_name, y_name, mean, std, feature_eng, penalty, cv_results, preds, test_results, boot_results)
-    file_name = '-'.join([x_name, y_name, feature_eng])
+    # handle feature_eng
+    if not feature_eng: feature_eng = 'raw'
+    # get index
+    index = str(_getMaxIndex() + 1)+'.'
+    regression_type = _getRegressionType(penalty)
+    file_name = index+'-'.join([_extractName(x_name), _extractName(y_name), feature_eng, regression_type])
     file_path = os.path.join('log', file_name)
     with open(file_path+'.json', 'w') as f:
         json.dump(log, f)
     if verbose: print('Saved to ',file_path)
     return
-
-
 
 # Split train test by csv files in data folder
 def splitTrainTest(array, verbose = False):
@@ -97,7 +124,6 @@ def splitTrainTest(array, verbose = False):
     train = np.delete(array, test_index_list, axis=0)
     if verbose: print("training set shape: {}; testing set shape: {}".format(train.shape, test.shape))
     return train, test
-
 
 # Model related
 # Feature engineering functions
@@ -162,12 +188,13 @@ def fpr(X,Y,func):
         'mutual_info_classif': mutual_info_classif,
         'chi2': chi2
     }
-    model = SelectFpr(funcs_dict.get(func))
+    model = SelectFpr(funcs_dict.get(func), alpha=1e5)
     model.fit(X, Y.reshape(Y.shape[0]))
     X_selected = model.transform(X)
     return X_selected, model
 
 # perform training and testing on given training and testing set
+@ignore_warnings(category=ConvergenceWarning)
 def modelTrainTest(model, x_train, y_train, x_test, y_test, feature_eng):
     '''
     :return: predictions, [<evaluate returns>]
@@ -219,7 +246,7 @@ def outputBestParam(basemodel, param_list, X, Y, feature_eng, metric = 'mae'):
         model = basemodel(**param_list[i])
         results = crossValidation(model, X, Y, feature_eng)
         metric_list.append(_meanMetric(results, metric))
-    return param_list[metric_list.index(max(metric_list))]
+    return param_list[metric_list.index(min(metric_list))]
 
 
 # bootstrapping
@@ -262,7 +289,7 @@ def evaluate(y_true, y_preds, verbose = False):
 
 # Visualization
 # all items in a list with a tab to separate
-def returnRow(list):
+def _returnRow(list):
     return '\t'.join([str(i) for i in list])
 
 # Print results
@@ -280,8 +307,18 @@ def fillTable(cv_results, test_results, boot_results):
     for metric in ['mae', 'rmse', 'r2', 'cor']:
         item = _meanMetric(boot_results, metric)
         row_items.append(item)
-    print(returnRow(row_items))
-    print('finished')
+    print(_returnRow(row_items))
+
+# Heatmap
+def heatmap(X):
+    seaborn.heatmap(X)
+    plt.show()
+
+# histogram
+def hist(Y):
+    plt.hist(Y)
+    plt.show()
+
 
 # debug helper function
 def debug():
