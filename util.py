@@ -346,7 +346,7 @@ def fillTable(cv_results, test_results, boot_results, digit = 4):
     # boot
     for metric in ['mae', 'rmse', 'r2', 'cor']:
         item = _meanMetric(boot_results, metric)
-        ci = _returnCI(_ciMetric(boot_results, metric))
+        ci = _returnCI(_ciMetric(boot_results, metric), digit)
         row_items.append(item)
         row_items.append(ci)
     print(_returnRow(row_items))

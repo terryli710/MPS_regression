@@ -36,7 +36,7 @@ def main(x_data, y_data, feature_eng, param_list):
     boot_results = bootstrap(lr, x_train_s, y_train, x_test_s, y_test, feature_eng, times=30)
 
     # Store results
-    # saveLog([x_data, y_data], ss.mean_, ss.var_, feature_eng, best_param, cv_results, preds, evaluate, boot_results, verbose=False)
+    saveLog([x_data, y_data], ss.mean_, ss.var_, feature_eng, best_param, cv_results, preds, evaluate, boot_results, verbose=False)
 
     # Print results
     fillTable(cv_results, evaluate, boot_results, digit = 6)
