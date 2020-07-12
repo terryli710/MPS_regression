@@ -1,9 +1,5 @@
 # Util functions in this project
 
-'''
-ToDo:
-1. fpr/gus selection will select 0 feature
-'''
 
 import json
 import numpy as np
@@ -12,16 +8,27 @@ import os
 from scipy.io import loadmat
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.decomposition import PCA
-from sklearn.feature_selection import GenericUnivariateSelect, SelectFpr, chi2, mutual_info_classif, f_classif
+from sklearn.feature_selection import GenericUnivariateSelect, SelectFpr, chi2, mutual_info_regression, f_regression
 from sklearn.model_selection import KFold
 from scipy.stats import spearmanr
 from sklearn.utils import resample
 import seaborn
 import matplotlib.pyplot as plt
-from sklearn.utils.testing import ignore_warnings
-from sklearn.exceptions import ConvergenceWarning
 
-# Data related
+
+### Handling warnings ###
+import warnings
+from sklearn.exceptions import ConvergenceWarning
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
+
+
+
+### Data related ###
+
+# merge dictionaries
+def mergeDict(dict1, dict2):
+    return {**dict1, **dict2}
 
 # Output path of a file given a list of names
 def _getFilePath(list):
@@ -53,7 +60,7 @@ def storeNdArray(array, name, subdir = []):
     return
 
 # Store the information about regression and test results
-def writeLog(x_name, y_name, mean, std, feature_eng, penalty, cv_results, preds, test_results, boot_results):
+def _writeLog(info, mean, std, feature_eng, penalty, cv_results, preds, test_results, boot_results, version=1):
     '''
     Store a dictionary that contains
     1. x_name: string
@@ -68,8 +75,7 @@ def writeLog(x_name, y_name, mean, std, feature_eng, penalty, cv_results, preds,
     10. test set bootstrap: dict: list
     '''
     log = {
-        'x_name' : x_name,
-        'y_name' : y_name,
+        'info' : info,
         'mean' : list(mean),
         'std' : list(std),
         'feature_eng' : feature_eng,
@@ -96,25 +102,38 @@ def _extractIndex(file_name):
 def _getMaxIndex():
     file_names = os.listdir('log')
     index = [_extractIndex(name) for name in file_names]
+    if len(index) == 0: return 0
     return max(index)
 
 def _getRegressionType(penalty):
     if penalty['l1_ratio'] > 0.5: return 'lasso'
     else: return 'ridge'
 
-def saveLog(x_name, y_name, mean, std, feature_eng, penalty, cv_results, preds, test_results, boot_results, verbose = False):
-    log = writeLog(x_name, y_name, mean, std, feature_eng, penalty, cv_results, preds, test_results, boot_results)
+def _getLogName(info, feature_eng, penalty):
+    # handle feature_eng
+    if not feature_eng: feature_eng = 'raw'
+    # regression type
+    regression_type = _getRegressionType(penalty)
+    # get index
+    index = str(_getMaxIndex() + 1) + '.'
+    regression_type = _getRegressionType(penalty)
+    return index + '-'.join([_extractName(name) for name in info]+[feature_eng, regression_type])
+
+
+def saveLog(info, mean, std, feature_eng, penalty, cv_results, preds, test_results, boot_results, verbose = False):
+    log = _writeLog(info, mean, std, feature_eng, penalty, cv_results, preds, test_results, boot_results, version=1)
     # handle feature_eng
     if not feature_eng: feature_eng = 'raw'
     # get index
     index = str(_getMaxIndex() + 1)+'.'
-    regression_type = _getRegressionType(penalty)
-    file_name = index+'-'.join([_extractName(x_name), _extractName(y_name), feature_eng, regression_type])
+    file_name = _getLogName(info, feature_eng, penalty)
     file_path = os.path.join('log', file_name)
     with open(file_path+'.json', 'w') as f:
         json.dump(log, f)
     if verbose: print('Saved to ',file_path)
     return
+
+
 
 # Split train test by csv files in data folder
 def splitTrainTest(array, verbose = False):
@@ -125,7 +144,10 @@ def splitTrainTest(array, verbose = False):
     if verbose: print("training set shape: {}; testing set shape: {}".format(train.shape, test.shape))
     return train, test
 
-# Model related
+
+
+### Model related ###
+
 # Feature engineering functions
 def featureEng(X, Y, feature_eng, verbose=False):
     '''
@@ -133,10 +155,10 @@ def featureEng(X, Y, feature_eng, verbose=False):
     :param x: input ndarray (n_sample, features)
     :param feature_eng: a string indicating the feature engineering method to use
     Could be:
-    '' : no use anything
+    '' : not use anything
     'PCA-<explained_variance>'
-    'GUS-<function>'
-    'FPR-<function>'
+    'GUS-<function>-<param>'
+    'FPR-<function>-<param>'
     :param verbose: whether to print info
     :return: Processed X, feature_eng model
     '''
@@ -149,52 +171,58 @@ def featureEng(X, Y, feature_eng, verbose=False):
     if not feature_eng: return X, 0
     # else
     if verbose: print('Feature Eng with keyword = ', feature_eng)
-    method, param = feature_eng.split("-")
+    method = feature_eng.split("-")[0]
+    param = feature_eng.split("-")[-1]
     if method == 'PCA' :
         if verbose: print("Using PCA with param = ", param)
-        return pca(X, float(param))
+        return pca(X, param)
     else:
-        if verbose: print("Using {} with func = {}".format(method, param))
-        return methods_dict.get(method)(X, Y, param)
+        func = feature_eng.split("-")[1]
+        if verbose: print("Using {} with func = {} and param = {}".format(method, func, param))
+        return methods_dict.get(method)(X, Y, func, param)
 
 # PCA
-def pca(X, explained_variance = 0.9):
+def pca(X, explained_variance = '0.9'):
+    # param is string type
+    explained_variance = float(explained_variance)
     pcamodel = PCA(n_components=explained_variance)
     pcamodel.fit(X)
     X_selected = pcamodel.transform(X)
     return X_selected, pcamodel
 
 # GUS
-def gus(X, Y, func):
+def gus(X, Y, func, param):
     '''
     GenericUnivariateSelect with k_best = 5
     :param func: one of 'f_classif', 'mutual_info_classif', 'chi2'
+    :param param: a parameter, string!!
     :return: transformed x and gusmodel
     '''
     funcs_dict = {
-        'f_classif': f_classif,
-        'mutual_info_classif': mutual_info_classif,
+        'f_regression': f_regression,
+        'mutual_info_regression': mutual_info_regression,
         'chi2': chi2
     }
-    model = GenericUnivariateSelect(funcs_dict.get(func), mode='k_best')
+    param = int(param)
+    model = GenericUnivariateSelect(funcs_dict.get(func), mode='k_best', param=param)
     model.fit(X, Y.reshape(Y.shape[0]))
     X_selected = model.transform(X)
     return X_selected, model
 
 # FPR
-def fpr(X,Y,func):
+def fpr(X, Y, func, param):
     funcs_dict = {
-        'f_classif': f_classif,
-        'mutual_info_classif': mutual_info_classif,
+        'f_regression': f_regression,
+        'mutual_info_regression': mutual_info_regression,
         'chi2': chi2
     }
-    model = SelectFpr(funcs_dict.get(func), alpha=1e5)
+    param = float(param)
+    model = SelectFpr(funcs_dict.get(func), alpha = param)
     model.fit(X, Y.reshape(Y.shape[0]))
     X_selected = model.transform(X)
     return X_selected, model
 
 # perform training and testing on given training and testing set
-@ignore_warnings(category=ConvergenceWarning)
 def modelTrainTest(model, x_train, y_train, x_test, y_test, feature_eng):
     '''
     :return: predictions, [<evaluate returns>]
@@ -224,6 +252,7 @@ def crossValidation(model, X, Y, feature_eng, fold = 5):
         results.append(metrics)
     return results
 
+
 # get a list of named metric
 def _getMetricList(results, metric):
     list = []
@@ -234,6 +263,10 @@ def _getMetricList(results, metric):
 # calculate the mean of a metric
 def _meanMetric(results, metric):
     return np.mean(_getMetricList(results, metric))
+
+# calculate the CI of a metric
+def _ciMetric(results, metric, level=0.95):
+    return np.percentile(_getMetricList(results, metric), [0.5*(1-level), 1-0.5*(1-level)])
 
 # Hyperparameter tuning function
 def outputBestParam(basemodel, param_list, X, Y, feature_eng, metric = 'mae'):
@@ -287,13 +320,20 @@ def evaluate(y_true, y_preds, verbose = False):
         print("Spearman correlation coefficient: {}, p-value = {}".format(cor, p))
     return {'mae' : mae, 'rmse' : rmse, 'r2' : r2, 'cor' :cor ,'p' :p}
 
-# Visualization
+
+
+### Visualization ###
+
+
 # all items in a list with a tab to separate
 def _returnRow(list):
     return '\t'.join([str(i) for i in list])
 
+def _returnCI(ci, digit = 4):
+    return " CI = [{}, {}]".format(str(round(ci[0],digit)),str(round(ci[1],digit)))
+
 # Print results
-def fillTable(cv_results, test_results, boot_results):
+def fillTable(cv_results, test_results, boot_results, digit = 4):
     row_items = []
     # cv
     for metric in ['mae', 'rmse', 'r2', 'cor']:
@@ -306,8 +346,11 @@ def fillTable(cv_results, test_results, boot_results):
     # boot
     for metric in ['mae', 'rmse', 'r2', 'cor']:
         item = _meanMetric(boot_results, metric)
+        ci = _returnCI(_ciMetric(boot_results, metric))
         row_items.append(item)
+        row_items.append(ci)
     print(_returnRow(row_items))
+
 
 # Heatmap
 def heatmap(X):
