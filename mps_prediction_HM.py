@@ -2,7 +2,7 @@
 
 from util import *
 import numpy as np
-from sklearn.linear_model import ElasticNet
+from sklearn.linear_model import ElasticNet, HuberRegressor
 from sklearn.preprocessing import StandardScaler
 from model_constants import *
 
@@ -43,7 +43,7 @@ def main(x_data, y_data, feature_eng, param_list):
 
 if __name__ == '__main__':
     # data
-    data_dict = {'x_data': 'HM_X_ang_vel.npy', 'y_data': 'HM_MPS95.npy'}
+    data_dict = {'x_data': 'HM_X_ang_vel.npy', 'y_data': 'HM_MPSCC95.npy'}
 
     # main loop
     for param in main_param_list:

@@ -116,16 +116,14 @@ def _getLogName(info, feature_eng, penalty):
     regression_type = _getRegressionType(penalty)
     # get index
     index = str(_getMaxIndex() + 1) + '.'
-    regression_type = _getRegressionType(penalty)
     return index + '-'.join([_extractName(name) for name in info]+[feature_eng, regression_type])
 
-
+# save log
 def saveLog(info, mean, std, feature_eng, penalty, cv_results, preds, test_results, boot_results, verbose = False):
     log = _writeLog(info, mean, std, feature_eng, penalty, cv_results, preds, test_results, boot_results, version=1)
     # handle feature_eng
     if not feature_eng: feature_eng = 'raw'
     # get index
-    index = str(_getMaxIndex() + 1)+'.'
     file_name = _getLogName(info, feature_eng, penalty)
     file_path = os.path.join('log', file_name)
     with open(file_path+'.json', 'w') as f:
@@ -133,7 +131,14 @@ def saveLog(info, mean, std, feature_eng, penalty, cv_results, preds, test_resul
     if verbose: print('Saved to ',file_path)
     return
 
-
+# load log
+def loadLogbyIndex(index):
+    file_names = os.listdir('log')
+    file_index_dict = {_extractIndex(file_name):file_name for file_name in file_names}
+    file_path = os.path.join('log', file_index_dict[index])
+    with open(file_path, 'r') as f:
+        log = json.load(f)
+    return log
 
 # Split train test by csv files in data folder
 def splitTrainTest(array, verbose = False):
@@ -143,7 +148,6 @@ def splitTrainTest(array, verbose = False):
     train = np.delete(array, test_index_list, axis=0)
     if verbose: print("training set shape: {}; testing set shape: {}".format(train.shape, test.shape))
     return train, test
-
 
 
 ### Model related ###
@@ -320,10 +324,18 @@ def evaluate(y_true, y_preds, verbose = False):
         print("Spearman correlation coefficient: {}, p-value = {}".format(cor, p))
     return {'mae' : mae, 'rmse' : rmse, 'r2' : r2, 'cor' :cor ,'p' :p}
 
-
+# manually select feature of a ndarray
+def selectFeature(X, excluded, verbose=False):
+    '''
+    :param X: ndarray
+    :param excluded: list of index of features to be excluded
+    :return: new X
+    '''
+    new_x = np.delete(X, excluded, axis=1)
+    if verbose: print('Original shape {}; New shape {}. With {} features excluded.'.format(X.shape, new_x.shape, excluded))
+    return new_x
 
 ### Visualization ###
-
 
 # all items in a list with a tab to separate
 def _returnRow(list):
