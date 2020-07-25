@@ -6,6 +6,7 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 from itertools import combinations, compress
+from util import _returnRow
 
 ### COLLINEARITY RELATED ###
 def getVif(xdf):
@@ -54,16 +55,17 @@ def vifStepwiseSelect(X, threshold=5, verbose=1):
         else:
             if verbose:
                 print('Deleted variable index: ', deleted)
+                print('{} variables remain in the model'.format(X.shape[1]-len(deleted)))
             return x_copy, vif
-        if verbose:
+        # print info for each iteration
+        if verbose >= 2:
             print("Iteration ", i)
-            if verbose > 1:
+            if verbose >= 3:
                 print("Problematic variables and vifs are: ")
                 print(oob_vif)
+            if verbose >= 2:
                 print("Problematic variables are: ", list(oob_vif.variable))
-            else:
-                print("Problematic variables are: ", list(oob_vif.variable))
-            print("Delete variable NO.",int(max_vif['variable']))
+                print("Delete variable NO.",int(max_vif['variable']))
 
 ### FEATURE IMPORTANCE RELATED ###
 # reference: https://conservancy.umn.edu/bitstream/handle/11299/213096/Semmel_umn_0130E_18941.pdf?sequence=1&isAllowed=y
@@ -84,19 +86,6 @@ def _r2(y, yhat):
     r2 = 1 - float(ssr)/sst
     return r2
 
-
-def first(x, y):
-    # return the R^2 of p linear models
-    # model i: y = beta * x_i + intercept
-    r2_list = []
-    for i in range(x.shape[1]):
-        lr = LinearRegression()
-        lr.fit(x[:,i:i+1], y)
-        yhat = lr.predict(x[:,i:i+1])
-        r2_list.append(_r2(y, yhat))
-    return r2_list
-
-# 2. srw
 def _stdLinear(x, y):
     ss = StandardScaler()
     xs = ss.fit_transform(x)
@@ -104,6 +93,17 @@ def _stdLinear(x, y):
     lr.fit(xs, y)
     return lr, ss
 
+def first(x, y):
+    # return the R^2 of p linear models
+    # model i: y = beta * x_i + intercept
+    r2_list = []
+    for i in range(x.shape[1]):
+        lr, ss = _stdLinear(x.iloc[:,i:i+1], y)
+        yhat = lr.predict(ss.transform(x.iloc[:,i:i+1]))
+        r2_list.append(_r2(y, yhat))
+    return r2_list
+
+# 2. srw
 def srw(x, y):
     lr,_ = _stdLinear(x, y)
     return list(lr.coef_[0,:])
@@ -155,6 +155,7 @@ def _aps(X,Y):
     if isinstance(X, pd.DataFrame):
         feature_names = list(X.columns)
     else:
+        feature_names = list(range(X.shape[1]))
         feature_names = list(range(X.shape[1]))
     # get subset matrix
     feature_num = X.shape[1]
@@ -256,6 +257,77 @@ def ca(X,Y):
     result_coef = _commonality(r2_df, subset_df, comb_feature)
     return _caResultDf(comb_feature, result_coef)
 
+
+def _getRank(array, names = []):
+    '''
+    Give the rank of a np.array in a list
+    Input: array: np.array, can be coefficient for each feature
+           names: feature name in a df
+           verbose: bool, print ranking or not
+    '''
+    assert type(array) == np.ndarray
+    array = array.reshape(-1, )
+    st_idx = np.argsort(-abs(array))
+    rank = []
+    for i in range(array.shape[0]):
+        rank.append(np.where(st_idx == i)[0][0] + 1)
+    if len(names)>0: return pd.DataFrame({'names':names, 'rank':rank})
+    else: return pd.DataFrame({'names':list(range(len(rank))), 'rank':rank})
+
+
+def bootstrapping(x, y, func, times=100):
+    coef_boot = np.zeros((times, x.shape[1]))
+    for t in range(times):
+        # boot sample
+        idx_boot = np.random.randint(0, x.shape[0], size=x.shape[0])
+        x_boot = x.iloc[idx_boot, :]
+        y_boot = y[idx_boot]
+        # get feature importance
+        coef_boot[t,:] = func(x_boot, y_boot)
+    return coef_boot
+
+def _getCI(coef_boot, percent=.95):
+    # confidence interval over the columns of ndarray
+    # coef_boot = (times, x.shape[1])
+    ci = []
+    for col in range(coef_boot.shape[1]):
+        ci.append(np.percentile(coef_boot[:,col], [50*(1-percent), 100-50*(1-percent)]))
+    return ci
+
+def _getMean(coef_boot):
+    # mean over columns, just to save a line
+    return np.mean(coef_boot, axis=0)
+
+def _returnTable(col_list):
+    col_len = len(col_list)
+    row_len = len(col_list[0])
+    rows = []
+    for i in range(row_len):
+        rows.append('\t'.join([str(col[i]) for col in col_list]))
+    return '\n'.join(rows)
+
+
+def printBootResult(coef_boot, names_full, names_selected):
+    # Print for table filling
+    # mean
+    mean = _getMean(coef_boot)
+    CI = [str(ci) for ci in _getCI(coef_boot)]
+    rank = _getRank(mean, names_selected)['rank'].values.tolist()
+    return _returnTable([_fillBlank(col, names_full, names_selected) for col in [mean, CI, rank]])
+
+
+def _fillBlank(content, names_full, names_selected):
+    # Get full content of a list (a column) to fill the table
+    num_full = len(names_full)
+    num_selected = len(names_selected)
+    full_content = ['NA'] * num_full
+    # fill the rows with values
+    for i in range(num_selected):
+        row = names_full.index(names_selected[i])
+        full_content[row] = content[i]
+    return full_content
+
+
 # debug function
 def debug():
     from util import loadNpy
@@ -265,7 +337,3 @@ def debug():
     y = Y[0:5,:]
     b = ca(a, y)
     print(b)
-
-
-if __name__ == '__main__':
-    debug()
