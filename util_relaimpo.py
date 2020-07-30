@@ -6,7 +6,7 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 from itertools import combinations, compress
-from util import _returnRow
+from tqdm import tqdm
 
 ### COLLINEARITY RELATED ###
 def getVif(xdf):
@@ -48,7 +48,7 @@ def vifStepwiseSelect(X, threshold=5, verbose=1):
         # IF there is something to delete
         if oob_vif.shape[0] > 0:
             max_vif = _getMaxVif(vif)
-            variable_delete = int(max_vif['variable'])
+            variable_delete = str(max_vif['variable'])
             x_copy = x_copy.drop(variable_delete, axis=1)
             deleted.append(variable_delete)
             i += 1
@@ -62,10 +62,10 @@ def vifStepwiseSelect(X, threshold=5, verbose=1):
             print("Iteration ", i)
             if verbose >= 3:
                 print("Problematic variables and vifs are: ")
-                print(oob_vif)
+                print(oob_vif.head())
             if verbose >= 2:
                 print("Problematic variables are: ", list(oob_vif.variable))
-                print("Delete variable NO.",int(max_vif['variable']))
+                print("Delete variable",str(max_vif['variable']))
 
 ### FEATURE IMPORTANCE RELATED ###
 # reference: https://conservancy.umn.edu/bitstream/handle/11299/213096/Semmel_umn_0130E_18941.pdf?sequence=1&isAllowed=y
@@ -94,31 +94,37 @@ def _stdLinear(x, y):
     return lr, ss
 
 def first(x, y):
-    # return the R^2 of p linear models
-    # model i: y = beta * x_i + intercept
-    r2_list = []
-    for i in range(x.shape[1]):
-        lr, ss = _stdLinear(x.iloc[:,i:i+1], y)
-        yhat = lr.predict(ss.transform(x.iloc[:,i:i+1]))
-        r2_list.append(_r2(y, yhat))
-    return r2_list
+    if not isinstance(x, list):
+        # return the R^2 of p linear models
+        # model i: y = beta * x_i + intercept
+        r2_list = []
+        for i in range(x.shape[1]):
+            r2_list.append(_getR2(x.iloc[:,i:i+1], y))
+        return r2_list
+    elif isinstance(x, list):
+        # input a list of dataframes
+        # return the R^2 of each models
+        r2_list = []
+        for xdf in x:
+            r2_list.append(_getR2(xdf, y))
+        return r2_list
+
 
 # 2. srw
 def srw(x, y):
     lr,_ = _stdLinear(x, y)
-    return list(lr.coef_[0,:])
+    return [abs(x) for x in list(lr.coef_[0,:])]
 
 # 3. structcoef
 def structcoef(x, y):
-    lr = LinearRegression()
-    lr.fit(x, y)
-    yhat = lr.predict(x)
-    r2_total = _r2(y, yhat)
+    if not isinstance(x, list) : r2_total = _getR2(x, y)
+    else : r2_total = _getR2(pd.concat(x, axis=1), y)
     return first(x, y) / r2_total
+
 
 # 4. pratt
 def pratt(x, y):
-    beta = srw(x, y)
+    beta = [abs(x) for x in srw(x, y)]
     r2 = first(x, y)
     return [a*b for a,b in zip(beta, r2)]
 
@@ -149,29 +155,45 @@ def _list2Name(list):
 def _aps(X,Y):
     '''
     Perform all possible subset regression to all the variables in X
+    X could be a list of df which denotes meta-features
     :return: a DF of [index, feature name, R2]
     '''
-    # get feature name
+    # version 1, X = DF
     if isinstance(X, pd.DataFrame):
         feature_names = list(X.columns)
-    else:
-        feature_names = list(range(X.shape[1]))
-        feature_names = list(range(X.shape[1]))
-    # get subset matrix
-    feature_num = X.shape[1]
-    subset_matrix = _subsetMatrix(feature_num)
-    # regression models and compute R^2
-    index = list(range(2**X.shape[1]-1))
-    comb_feature = []
-    r2_score = []
-    for i in index:
-        comb_feature.append(list(compress(feature_names, subset_matrix[:,i])))
-        x_subset = X[:,subset_matrix[:,i]]
-        r2_score.append(_getR2(x_subset,Y))
-    comb_feature_names = [_list2Name(name) for name in comb_feature]
-    r2_df = pd.DataFrame({'index':index, 'feature names':comb_feature_names, 'r2':r2_score})
-    subset_df = pd.DataFrame(data=subset_matrix, index=feature_names, columns=comb_feature_names)
-    return r2_df, subset_df, comb_feature
+        # get subset matrix
+        feature_num = X.shape[1]
+        subset_matrix = _subsetMatrix(feature_num)
+        # regression models and compute R^2
+        index = list(range(2**feature_num-1))
+        comb_feature = []
+        r2_score = []
+        for i in index:
+            comb_feature.append(list(compress(feature_names, subset_matrix[:,i])))
+            x_subset = X.iloc[:,subset_matrix[:,i]]
+            r2_score.append(_getR2(x_subset,Y))
+        comb_feature_names = [_list2Name(name) for name in comb_feature]
+        r2_df = pd.DataFrame({'index':index, 'feature names':comb_feature_names, 'r2':r2_score})
+        subset_df = pd.DataFrame(data=subset_matrix, index=feature_names, columns=comb_feature_names)
+        return r2_df, subset_df, comb_feature
+    # version 2, X = list
+    elif isinstance(X, list):
+        feature_names = list(range(len(X)))
+        # get subset matrix
+        feature_num = len(X)
+        subset_matrix = _subsetMatrix(feature_num)
+        # regression models and compute R^2
+        index = list(range(2**feature_num-1))
+        comb_feature = []
+        r2_score = []
+        for i in index:
+            comb_feature.append(list(compress(feature_names, subset_matrix[:,i])))
+            x_subset = pd.concat(list(compress(X, subset_matrix[:,i])),axis=1)
+            r2_score.append(_getR2(x_subset, Y))
+        comb_feature_names = [_list2Name(name) for name in comb_feature]
+        r2_df = pd.DataFrame({'index': index, 'feature names': comb_feature_names, 'r2': r2_score})
+        subset_df = pd.DataFrame(data=subset_matrix, index=feature_names, columns=comb_feature_names)
+        return r2_df, subset_df, comb_feature
 
 def _ivID(subset_df):
     # get iv ID in a wierd way, refer to https://rdrr.io/cran/yhat/src/R/aps.r
@@ -222,8 +244,7 @@ def _commonality(r2_df, subset_df, comb_feature):
             else: ilist = _genList(ilist,int(ivID[j]))
         ilist = [-x for x in ilist]
         commonmality_list.append(ilist)
-    print(commonmality_list)
-
+    # print(commonmality_list)
 
     ## Use the list of R2 values to compute each commonality coefficient.
     r2_matrix = r2_df['r2'].to_numpy()
@@ -276,15 +297,30 @@ def _getRank(array, names = []):
 
 
 def bootstrapping(x, y, func, times=100):
-    coef_boot = np.zeros((times, x.shape[1]))
-    for t in range(times):
-        # boot sample
-        idx_boot = np.random.randint(0, x.shape[0], size=x.shape[0])
-        x_boot = x.iloc[idx_boot, :]
-        y_boot = y[idx_boot]
-        # get feature importance
-        coef_boot[t,:] = func(x_boot, y_boot)
+    # version 1
+    if isinstance(x, pd.DataFrame):
+        coef_boot = np.zeros((times, x.shape[1]))
+        for t in tqdm(range(times)):
+            # boot sample
+            num_sample = x.shape[0]
+            idx_boot = np.random.randint(0, num_sample, size=num_sample)
+            x_boot = x.iloc[idx_boot, :]
+            y_boot = y[idx_boot]
+            # get feature importance
+            coef_boot[t,:] = func(x_boot, y_boot)
+    # version 2
+    elif isinstance(x, list):
+        coef_boot = np.zeros((times, len(x)))
+        num_sample = x[0].shape[0]
+        for t in tqdm(range(times)):
+            # boot sample
+            idx_boot = np.random.randint(0, num_sample, size=num_sample)
+            x_boot = [x_item.iloc[idx_boot,:] for x_item in x]
+            y_boot = y[idx_boot]
+            # get feature ipmortance
+            coef_boot[t,:] = func(x_boot, y_boot)
     return coef_boot
+
 
 def _getCI(coef_boot, percent=.95):
     # confidence interval over the columns of ndarray
@@ -306,6 +342,11 @@ def _returnTable(col_list):
         rows.append('\t'.join([str(col[i]) for col in col_list]))
     return '\n'.join(rows)
 
+def _getPercent(value):
+    # value could be list or ndarray (1D)
+    # return list
+    return value / np.sum(value)
+
 
 def printBootResult(coef_boot, names_full, names_selected):
     # Print for table filling
@@ -313,7 +354,8 @@ def printBootResult(coef_boot, names_full, names_selected):
     mean = _getMean(coef_boot)
     CI = [str(ci) for ci in _getCI(coef_boot)]
     rank = _getRank(mean, names_selected)['rank'].values.tolist()
-    return _returnTable([_fillBlank(col, names_full, names_selected) for col in [mean, CI, rank]])
+    percent = ["{:.2%}".format(p) for p in _getPercent(mean)]
+    return _returnTable([_fillBlank(col, names_full, names_selected) for col in [mean, CI, percent, rank]])
 
 
 def _fillBlank(content, names_full, names_selected):
@@ -327,13 +369,26 @@ def _fillBlank(content, names_full, names_selected):
         full_content[row] = content[i]
     return full_content
 
+def _getPercent(score):
+    return score / np.sum(score)
+
+def _getPercentString(number):
+    number = str(number)
+    return "{0:,1%}".format(number)
+
+def getFeatureNames(feature_descriptions):
+    name_list = []
+    for row in range(feature_descriptions.shape[0]):
+        name_list.append('_'.join([str(x) for x in list(feature_descriptions.loc[row,:])]))
+    return name_list
+
 
 # debug function
 def debug():
     from util import loadNpy
     X = loadNpy(['data','X','HM_X_ang_vel.npy'])
     Y = loadNpy(['data', 'Y', 'HM_MPS95.npy'])
-    a = X[0:5,0:3]
+    adf = pd.DataFrame(X[0:5,0:3])
+    bdf = pd.DataFrame(X[0:5,4:5])
     y = Y[0:5,:]
-    b = ca(a, y)
-    print(b)
+    print(ca([adf, bdf], y))
