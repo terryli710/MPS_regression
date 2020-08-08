@@ -129,157 +129,15 @@ def pratt(x, y):
     return [a*b for a,b in zip(beta, r2)]
 
 # 5. Commonality Analysis (ca)
-def _subsetMatrix(num):
-    # compute subset matrix:
-    # number of features = k = num
-    # matrix dimension: (k, 2^k-1)
-    matrix = np.zeros((num, 2**num-1), dtype=bool)
-    index=0
-    for num_variable in range(1, num+1):
-        for comb in combinations(range(num), num_variable):
-            for value in comb:
-                matrix[value,index]=True
-            index+=1
-    return matrix
-
 def _getR2(X, Y):
     # get R^2 from a simple linear regression between X and Y
     lr = LinearRegression()
     lr.fit(X, Y)
     return _r2(Y, lr.predict(X))
 
-def _list2Name(list):
-    # convert list of columns to a name
-    return ','.join(map(str, list))
 
-def _aps(X,Y):
-    '''
-    Perform all possible subset regression to all the variables in X
-    X could be a list of df which denotes meta-features
-    :return: a DF of [index, feature name, R2]
-    '''
-    # version 1, X = DF
-    if isinstance(X, pd.DataFrame):
-        feature_names = list(X.columns)
-        # get subset matrix
-        feature_num = X.shape[1]
-        subset_matrix = _subsetMatrix(feature_num)
-        # regression models and compute R^2
-        index = list(range(2**feature_num-1))
-        comb_feature = []
-        r2_score = []
-        for i in index:
-            comb_feature.append(list(compress(feature_names, subset_matrix[:,i])))
-            x_subset = X.iloc[:,subset_matrix[:,i]]
-            r2_score.append(_getR2(x_subset,Y))
-        comb_feature_names = [_list2Name(name) for name in comb_feature]
-        r2_df = pd.DataFrame({'index':index, 'feature names':comb_feature_names, 'r2':r2_score})
-        subset_df = pd.DataFrame(data=subset_matrix, index=feature_names, columns=comb_feature_names)
-        return r2_df, subset_df, comb_feature
-    # version 2, X = list
-    elif isinstance(X, list):
-        feature_names = list(range(len(X)))
-        # get subset matrix
-        feature_num = len(X)
-        subset_matrix = _subsetMatrix(feature_num)
-        # regression models and compute R^2
-        index = list(range(2**feature_num-1))
-        comb_feature = []
-        r2_score = []
-        for i in index:
-            comb_feature.append(list(compress(feature_names, subset_matrix[:,i])))
-            x_subset = pd.concat(list(compress(X, subset_matrix[:,i])),axis=1)
-            r2_score.append(_getR2(x_subset, Y))
-        comb_feature_names = [_list2Name(name) for name in comb_feature]
-        r2_df = pd.DataFrame({'index': index, 'feature names': comb_feature_names, 'r2': r2_score})
-        subset_df = pd.DataFrame(data=subset_matrix, index=feature_names, columns=comb_feature_names)
-        return r2_df, subset_df, comb_feature
-
-def _ivID(subset_df):
-    # get iv ID in a wierd way, refer to https://rdrr.io/cran/yhat/src/R/aps.r
-    feature_list = subset_df.index
-    ivID = [2**x for x in range(len(feature_list))]
-    return pd.DataFrame(data=ivID, index=feature_list, columns=['ivID'])
-
-
-def _apsBitMap(subset_df, comb_feature):
-    ivID = _ivID(subset_df)
-    bit = []
-    for feature_list in comb_feature:
-        value = 0
-        for feature in feature_list:
-            value += ivID.loc[feature, 'ivID']
-        bit.append(value)
-    return pd.DataFrame({'feature names':comb_feature, 'bit':bit})
-
-def _genList(ivlist, value):
-    nvar = len(ivlist)
-    newlist = []
-    for i in range(nvar):
-        newlist.append(abs(ivlist[i])+abs(value))
-        if (((ivlist[i]<0) and (value >= 0)) or ((ivlist[i]>=0) and (value <0))): newlist[i]*=-1
-    return newlist
-
-
-#EffectBitMap = subset_df
-def _commonality(r2_df, subset_df, comb_feature):
-    # basic ingredients
-    nvar = len(subset_df.index)
-    ivID = _ivID(subset_df)['ivID'].to_list()
-    aps_bit_map =  _apsBitMap(subset_df, comb_feature)
-    commonmality_list = []
-    numcc = 2**nvar - 1
-
-    ## Use the bitmap matrix to generate the list of R2 values needed.
-    for i in range(numcc):
-        bit = subset_df.iloc[0,i]
-        if bit==1 : ilist = [0,-int(ivID[0])]
-        else: ilist = [int(ivID[0])]
-        for j in range(1,nvar):
-            bit = subset_df.iloc[j,i]
-            if bit==1 :
-                alist = ilist
-                blist = _genList(ilist, -ivID[j])
-                ilist = alist + blist
-            else: ilist = _genList(ilist,int(ivID[j]))
-        ilist = [-x for x in ilist]
-        commonmality_list.append(ilist)
-    # print(commonmality_list)
-
-    ## Use the list of R2 values to compute each commonality coefficient.
-    r2_matrix = r2_df['r2'].to_numpy()
-    result_coef, result_percent = [], []
-    for i in range(numcc):
-        r2list = commonmality_list[i]
-        numlist = len(r2list)
-        ccsum=0
-        for j in range(numlist):
-            indexs = r2list[j]
-            indexu = abs(indexs)
-            if indexu != 0 :
-                ccvalue = r2_matrix[indexu-1]
-                if indexs < 0 : ccvalue *= -1
-                ccsum += ccvalue
-        result_coef.append(ccsum)
-    return result_coef
-
-def _caResultDf(comb_feature, result_coef, digit=5):
-    percent = result_coef/np.sum(result_coef)
-    return pd.DataFrame({'feature names': comb_feature,
-                         'coefficients': [round(x, digit) for x in result_coef],
-                         'percent': [round(x, digit) for x in percent]})
-
-def ca(X,Y):
-    '''
-    Perform Commonality Analysis
-    :return: [feature names, coefficients, % Total]
-    '''
-    r2_df, subset_df, comb_feature = _aps(X, Y)
-    result_coef = _commonality(r2_df, subset_df, comb_feature)
-    return _caResultDf(comb_feature, result_coef)
-
-
-def _getRank(array, names = []):
+# other utils
+def _getRank(array, absolute=True, names = []):
     '''
     Give the rank of a np.array in a list
     Input: array: np.array, can be coefficient for each feature
@@ -288,7 +146,9 @@ def _getRank(array, names = []):
     '''
     assert type(array) == np.ndarray
     array = array.reshape(-1, )
-    st_idx = np.argsort(-abs(array))
+    # two ways of ranking
+    if absolute: st_idx = np.argsort(-abs(array))
+    else : st_idx = np.argsort(-array)
     rank = []
     for i in range(array.shape[0]):
         rank.append(np.where(st_idx == i)[0][0] + 1)
@@ -317,17 +177,18 @@ def bootstrapping(x, y, func, times=100):
             idx_boot = np.random.randint(0, num_sample, size=num_sample)
             x_boot = [x_item.iloc[idx_boot,:] for x_item in x]
             y_boot = y[idx_boot]
-            # get feature ipmortance
+            # get feature importance
             coef_boot[t,:] = func(x_boot, y_boot)
     return coef_boot
 
-
-def _getCI(coef_boot, percent=.95):
+def _getCI(coef_boot, percent=.95, digit=4):
     # confidence interval over the columns of ndarray
     # coef_boot = (times, x.shape[1])
     ci = []
     for col in range(coef_boot.shape[1]):
-        ci.append(np.percentile(coef_boot[:,col], [50*(1-percent), 100-50*(1-percent)]))
+        cicol = np.percentile(coef_boot[:,col], [50*(1-percent), 100-50*(1-percent)])
+        cicol = [round(x, digit) for x in cicol]
+        ci.append(cicol)
     return ci
 
 def _getMean(coef_boot):
@@ -342,10 +203,11 @@ def _returnTable(col_list):
         rows.append('\t'.join([str(col[i]) for col in col_list]))
     return '\n'.join(rows)
 
-def _getPercent(value):
+def _getPercent(value, digit=2):
     # value could be list or ndarray (1D)
     # return list
-    return value / np.sum(value)
+    percent_list = value / np.sum(value)
+    return [round(p, digit) for p in percent_list]
 
 
 def printBootResult(coef_boot, names_full, names_selected):
@@ -354,9 +216,12 @@ def printBootResult(coef_boot, names_full, names_selected):
     mean = _getMean(coef_boot)
     CI = [str(ci) for ci in _getCI(coef_boot)]
     rank = _getRank(mean, names_selected)['rank'].values.tolist()
-    percent = ["{:.2%}".format(p) for p in _getPercent(mean)]
-    return _returnTable([_fillBlank(col, names_full, names_selected) for col in [mean, CI, percent, rank]])
+    percent = _getPercent(mean)
+    print(_returnTable([_fillBlank(col, names_full, names_selected) for col in [mean, CI, percent, rank]]))
+    return
 
+def printBootResultCA(result_df):
+    print(_returnTable(result_df.transpose().values.tolist()))
 
 def _fillBlank(content, names_full, names_selected):
     # Get full content of a list (a column) to fill the table
@@ -385,10 +250,10 @@ def getFeatureNames(feature_descriptions):
 
 # debug function
 def debug():
-    from util import loadNpy
-    X = loadNpy(['data','X','HM_X_ang_vel.npy'])
-    Y = loadNpy(['data', 'Y', 'HM_MPS95.npy'])
-    adf = pd.DataFrame(X[0:5,0:3])
-    bdf = pd.DataFrame(X[0:5,4:5])
-    y = Y[0:5,:]
-    print(ca([adf, bdf], y))
+    from sklearn.datasets import load_iris
+    iris = load_iris()
+    X = pd.DataFrame(iris.data[:,1:4])
+    Y = iris.data[:, 0]
+
+if __name__ == '__main__':
+    debug()

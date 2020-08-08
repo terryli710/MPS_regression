@@ -37,7 +37,7 @@ def main(x_name, y_name, method, feature_names = []):
 feature_names = getFeatureNames(loadCsv(['data', 'X', 'feature_descriptions.csv']))
 
 if __name__ == '__main__':
-    main('HM_X_ang_vel.npy','HM_MPS95.npy', srw, feature_names)
-    main('AF_X_ang_vel.npy', 'AF_MPS95.npy', srw, feature_names)
-    main('NFL53_X_ang_vel.npy', 'NFL53_MPS95.npy', srw, feature_names)
+    main('HM_X_ang_vel.npy','HM_CSDM.npy', pratt, feature_names)
+    main('AF_X_ang_vel.npy', 'AF_CSDM.npy', pratt, feature_names)
+    main('NFL53_X_ang_vel.npy', 'NFL53_CSDM.npy', pratt, feature_names)
 
