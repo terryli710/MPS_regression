@@ -1,4 +1,5 @@
 ## Feature Importance of Brain Strain Linear Model
+## Works for "srw" and "pratt"
 
 # The workflow looks like the following.
 #
@@ -31,7 +32,7 @@ def main(x_name, y_name, method, feature_names = []):
     print("Selecting by VIF")
     x_selected_std, vif = vifStepwiseSelect(xdf, verbose=1)
     print("bootstrapping ...")
-    coef_boot =  bootstrapping(x_selected_std, Y, method)
+    coef_boot = bootstrapping(x_selected_std, Y, method)
     print(printBootResult(coef_boot, list(xdf.columns), list(x_selected_std.columns)))
 
 feature_names = getFeatureNames(loadCsv(['data', 'X', 'feature_descriptions.csv']))

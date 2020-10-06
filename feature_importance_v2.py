@@ -1,5 +1,5 @@
 ## Without filtering results with VIF, calculate the importance for all the features.
-
+## Works for "first" and "structcoef"
 from util_relaimpo import *
 from util import loadNpy, loadCsv
 
